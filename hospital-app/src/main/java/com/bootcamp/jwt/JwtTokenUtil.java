@@ -1,0 +1,93 @@
+package com.bootcamp.jwt;
+
+
+import io.jsonwebtoken.*;
+import io.jsonwebtoken.io.Decoders;
+import io.jsonwebtoken.security.Keys;
+import io.jsonwebtoken.security.SignatureException;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.security.authentication.BadCredentialsException;
+import org.springframework.security.core.GrantedAuthority;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
+import org.springframework.security.core.userdetails.UserDetails;
+import org.springframework.stereotype.Component;
+
+import java.io.Serializable;
+import java.security.Key;
+import java.util.*;
+
+@Slf4j
+@Component
+public class JwtTokenUtil implements Serializable {
+
+    private static final long serialVersionUID = -2550185165626007488L;
+
+    @Value("${jwt.secret}")
+    private String jwtSecret;
+
+    @Value("${jwt.jwtExpirationInMs}")
+    private int jwtExpirationInMs;
+
+    public String generateToken(UserDetails userDetails) {
+        Map<String, Object> claims = new HashMap<>();
+        Collection<? extends GrantedAuthority> roles = userDetails.getAuthorities();
+        log.info("roles={}", roles);
+        if (roles.contains(new SimpleGrantedAuthority("ROLE_ADMIN"))) {
+            log.info("put isAdmin");
+            claims.put("isAdmin", true);
+        }
+
+        return doGenerateToken(claims, userDetails.getUsername());
+    }
+
+    private String doGenerateToken(Map<String, Object> claims, String subject) {
+
+        return Jwts.builder()
+                .setClaims(claims)
+                .setSubject(subject)
+                .setIssuedAt(new Date(System.currentTimeMillis()))
+                .setExpiration(new Date(System.currentTimeMillis() + jwtExpirationInMs))
+                .signWith(key(), SignatureAlgorithm.HS256)
+                .compact();
+    }
+
+    public boolean validateToken(String authToken) {
+        try {
+            Jwts.parserBuilder().setSigningKey(key()).build().parse(authToken);
+            return true;
+        } catch (MalformedJwtException | UnsupportedJwtException | IllegalArgumentException | SignatureException ex) {
+            throw new BadCredentialsException("INVALID_CREDENTIALS", ex);
+        } catch (ExpiredJwtException ex) {
+            throw ex;
+        }
+    }
+
+    public String getUsernameFromToken(String token) {
+        Jws<Claims> claims = Jwts.parserBuilder().setSigningKey(key()).build()
+                .parseClaimsJws(token);
+        return claims.getBody().getSubject();
+    }
+
+    public List<SimpleGrantedAuthority> getRolesFromToken(String token) {
+        Jws<Claims> claims = Jwts.parserBuilder().setSigningKey(key()).build()
+                .parseClaimsJws(token);
+
+        List<SimpleGrantedAuthority> roles = new ArrayList<>();
+
+        Boolean isAdmin = claims.getBody().get("isAdmin", Boolean.class);
+        log.info("claims: {},{},{}", isAdmin);
+
+        if (isAdmin != null && isAdmin) {
+            roles.add(new SimpleGrantedAuthority("ROLE_ADMIN"));
+        }
+
+        return roles;
+
+    }
+
+    private Key key() {
+        byte[] keyBytes = Decoders.BASE64.decode(this.jwtSecret);
+        return Keys.hmacShaKeyFor(keyBytes);
+    }
+}
